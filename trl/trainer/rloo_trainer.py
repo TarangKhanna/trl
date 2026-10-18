@@ -1120,7 +1120,10 @@ class RLOOTrainer(_BaseTrainer):
                 # self._buffered_inputs=None can occur when resuming from a checkpoint
                 generation_batch = self._generate_and_score_completions(generation_batch)
                 generation_batch = split_pixel_values_by_grid(generation_batch)
-                generation_batch = shuffle_sequence_dict(generation_batch)
+                # Seed the shuffle per block so a block regenerated after a resume is sliced as in the original run.
+                with torch.random.fork_rng(devices=[]):
+                    torch.manual_seed(self.args.seed + self._step // generate_every)
+                    generation_batch = shuffle_sequence_dict(generation_batch)
                 generation_batches = split_tensor_dict(generation_batch, self.args.steps_per_generation)
                 self._buffered_inputs = [unsplit_pixel_values_by_grid(batch) for batch in generation_batches]
             inputs = self._buffered_inputs[self._step % self.args.steps_per_generation]
