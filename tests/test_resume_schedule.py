@@ -59,6 +59,8 @@ class TestResumeSchedule(TrlTestCase):
             (2, 1, 1, 24, 1, 1),  # checkpoint inside a 2-update block
             (3, 1, 2, 24, 1, 4),  # 3-update block, gradient accumulation
             (2, 1, 1, 24, 1, 3),  # last update of a block
+            (1, 2, 1, 24, 1, 1),  # 2 slices per block, one update each
+            (2, 2, 1, 24, 1, 3),  # 4-update block, last update
         ],
     )
     def test_resume_keeps_prompt_schedule(
