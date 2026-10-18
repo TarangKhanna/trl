@@ -54,11 +54,12 @@ def _tiny_model_and_tokenizer(num_prompts, path):
 class TestResumeSchedule(TrlTestCase):
     @pytest.mark.parametrize("trainer_cls, config_cls", [(GRPOTrainer, GRPOConfig), (RLOOTrainer, RLOOConfig)])
     @pytest.mark.parametrize(
-        "num_iterations, steps_per_generation, grad_accum, num_prompts, epochs, resume_step",
+        "num_iterations, steps_per_generation, grad_accum, num_prompts, epochs, resume_step, ignore_data_skip",
         [
-            (2, 1, 1, 24, 1, 1),  # checkpoint inside a 2-update block
-            (3, 1, 2, 24, 1, 4),  # 3-update block, gradient accumulation
-            (2, 1, 1, 24, 1, 3),  # last update of a block
+            (2, 1, 1, 24, 1, 1, False),  # checkpoint inside a 2-update block
+            (3, 1, 2, 24, 1, 4, False),  # 3-update block, gradient accumulation
+            (2, 1, 1, 24, 1, 3, False),  # last update of a block
+            (2, 1, 1, 24, 1, 1, True),  # no batch skipping: epoch restarts, so a new block starts
         ],
     )
     def test_resume_keeps_prompt_schedule(
@@ -71,6 +72,7 @@ class TestResumeSchedule(TrlTestCase):
         num_prompts,
         epochs,
         resume_step,
+        ignore_data_skip,
     ):
         # After a resume, each optimizer update must train on the same prompts as in the uninterrupted run.
         # Completions of the interrupted block are regenerated, so only prompts are compared.
@@ -92,6 +94,8 @@ class TestResumeSchedule(TrlTestCase):
                 use_cpu=True,
                 seed=123,
                 data_seed=123,
+                ignore_data_skip=ignore_data_skip,
+                shuffle_dataset=not ignore_data_skip,
             )
             schedule = {}
 
@@ -116,5 +120,10 @@ class TestResumeSchedule(TrlTestCase):
         full = run(full_dir)
         resumed = run(os.path.join(self.tmp_dir, "resumed"), os.path.join(full_dir, f"checkpoint-{resume_step}"))
         assert min(resumed) == resume_step
+        if ignore_data_skip:
+            # The Trainer restarts the epoch, so the resumed run replays the schedule from its first block.
+            for step, prompts in resumed.items():
+                assert prompts == full[step - resume_step], f"update {step} did not follow a restarted epoch"
+            return
         for step, prompts in resumed.items():
             assert prompts == full[step], f"update {step} trained on different prompts after resume"

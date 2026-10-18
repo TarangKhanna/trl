@@ -1110,12 +1110,14 @@ class RLOOTrainer(_BaseTrainer):
             if self._buffered_inputs is None:
                 # `_step` restarts at 0 on resume, so rebuild it from the dataloader position. Using
                 # `global_step * gradient_accumulation_steps` is off when an epoch ends on a short accumulation window.
+                # With `ignore_data_skip` the Trainer does not skip batches, so only completed epochs count.
                 ga = self.args.gradient_accumulation_steps
+                skip = not self.args.ignore_data_skip
                 if self._micro_steps_per_epoch is None:
-                    self._step = self.state.global_step * ga
+                    self._step = self.state.global_step * ga if skip else 0
                 else:
                     epochs_done, steps_in_epoch = divmod(self.state.global_step, -(-self._micro_steps_per_epoch // ga))
-                    self._step = epochs_done * self._micro_steps_per_epoch + steps_in_epoch * ga
+                    self._step = epochs_done * self._micro_steps_per_epoch + (steps_in_epoch * ga if skip else 0)
             if self._step % generate_every == 0 or self._buffered_inputs is None:
                 # self._buffered_inputs=None can occur when resuming from a checkpoint
                 generation_batch = self._generate_and_score_completions(generation_batch)
