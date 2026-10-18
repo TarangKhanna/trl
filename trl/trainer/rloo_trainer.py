@@ -631,6 +631,7 @@ class RLOOTrainer(_BaseTrainer):
             )
         # Tracks the number of iterations (forward + backward passes), including those within a grad accum cycle
         self._step = 0
+        self._micro_steps_per_epoch = None
         # Buffer the batch to reuse generated outputs across multiple updates. For more details, see
         # `_get_train_sampler` and `_prepare_inputs`.
         self._buffered_inputs = None
@@ -875,13 +876,15 @@ class RLOOTrainer(_BaseTrainer):
                 batch_size=self.args.generation_batch_size // self.num_generations,
                 repeat_count=self.num_iterations * self.args.steps_per_generation,
             )
-        return self._get_dataloader(
+        dataloader = self._get_dataloader(
             dataset=dataset,
             description="Training",
             batch_size=self._train_batch_size * self.args.steps_per_generation,  # < this is the change
             sampler_fn=self._get_train_sampler,
             is_training=True,
         )
+        self._micro_steps_per_epoch = None if isinstance(self.train_dataset, IterableDataset) else len(dataloader)
+        return dataloader
 
     def _get_train_sampler(self, dataset: Dataset | None = None) -> Sampler:
         # Returns a sampler that
@@ -1104,6 +1107,15 @@ class RLOOTrainer(_BaseTrainer):
         mode = "train" if self.model.training else "eval"
         if mode == "train":
             generate_every = self.args.steps_per_generation * self.num_iterations
+            if self._buffered_inputs is None:
+                # `_step` restarts at 0 on resume, so rebuild it from the dataloader position. Using
+                # `global_step * gradient_accumulation_steps` is off when an epoch ends on a short accumulation window.
+                ga = self.args.gradient_accumulation_steps
+                if self._micro_steps_per_epoch is None:
+                    self._step = self.state.global_step * ga
+                else:
+                    epochs_done, steps_in_epoch = divmod(self.state.global_step, -(-self._micro_steps_per_epoch // ga))
+                    self._step = epochs_done * self._micro_steps_per_epoch + steps_in_epoch * ga
             if self._step % generate_every == 0 or self._buffered_inputs is None:
                 # self._buffered_inputs=None can occur when resuming from a checkpoint
                 generation_batch = self._generate_and_score_completions(generation_batch)
